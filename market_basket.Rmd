@@ -1,0 +1,494 @@
+---
+title: "Cross Selling and Market Basket Analysis"
+author: "Gabriel Erichson Marpaung"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: true
+    number_sections: true
+    theme: sandstone
+    highlight: haddock
+    css:  style.css
+  pdf_document: default
+---
+
+<head>
+		<title>Market Basket Analysis</title>
+		<link rel="icon" href="assets/logo.png" type="image/png">
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+
+**Seluruh source projek ini bisa didapatkan di github** [Gabriel Erichson Marpaung](https://github.com/gabrielerichsonmrp/market_basket_analysis)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.align = "center",
+	message = FALSE,
+	warning = FALSE,
+	comment = "#>",
+	result = "hide"
+)
+
+options(scipen = 9999999)
+```
+
+
+```{r}
+#LIBRARY
+library(tidyverse)
+library(plotly)
+library(arules)
+library(arulesViz)
+```
+
+
+
+
+
+# Background
+
+Projek ini diupload sebagai bahan pembelajaran Market Basket Analysis. Adapun lingkup projek ini yaitu untuk melakukan market basket analysis menggunakan data penjualan di supermarket. 
+
+
+# Data Preparation
+
+Berikut ini data yang digunakan.
+
+## Read Data
+
+```{r}
+df_input <- read.csv("data_input/supermarket.csv")
+names(df_input)[1] <- "trans_id"
+
+df_input <- df_input %>% mutate(name = tolower(name))
+```
+
+**5 Top Line Data**
+
+```{r}
+head(df_input,5)
+```
+
+**5 Bottom Line Data**
+
+```{r}
+tail(df_input,5)
+```
+
+Data yang digunakan untuk analisa ini hanya ID Transaksi dan nama produk. Kemudian, hubungan antara variabel **trans_id** dan **name** bersifat **one to many**. Mari kita lanjutkan mengecek missing values.
+
+
+
+## Missing Value
+
+```{r}
+colSums(is.na(df_input))
+```
+
+Tidak ada missing value, jadi bisa dilanjutkan.
+
+
+## Duplicate Value
+```{r}
+data.frame(
+  total_all_row = df_input %>% nrow(),
+  total_unique_row = df_input %>% distinct() %>% nrow()
+)
+
+```
+
+Tidak ada baris data yang duplikat.
+
+
+
+## Data Structure
+
+```{r}
+glimpse(df_input)
+```
+
+Terdapat 79,626 baris data dan dari sturktur data nya tidak ada masalah.
+
+
+## Data Summary
+```{r}
+summary(df_input)
+```
+
+Dari summary data diatas tidak ada informasi penting yang bisa kita dapat. Mari kita explore datanya lebih jauh.
+
+
+
+# EDA
+
+Exploratory Data Analysis (EDA)
+
+
+## Total Transaction
+
+```{r}
+df_input$trans_id %>% unique() %>% length()
+```
+
+Terdapat 4601 transaksi dalam data ini.
+
+
+## Total Product
+
+```{r}
+df_input$name %>% unique() %>% length()
+```
+
+Terdapat 100 produk dari dataset ini.
+
+
+## Transaction
+
+Terdapat 4601 transaksi pembelian pada dataset ini.
+```{r}
+df_trans <- df_input %>% count(trans_id, name = "product", sort = TRUE)
+df_trans %>% nrow()
+```
+
+Berikut merupakan sebaran jumlah produk per transaksi.
+
+```{r}
+plot_ly(x=~df_trans$product, type="histogram") %>% 
+  layout(title = "Product per Transaction",
+         xaxis = list(title="Frequency", zeroline=FALSE),
+         yaxis = list(title="Total Transaction", zeroline=FALSE))
+```
+
+Transaksi minimal terdiri dari 1 produk dan maksimal 47 produk. 
+
+
+
+
+## Product
+
+Berikut ini data frekuensi pembelian produk secara berurutan dari yang paling tinggi.
+```{r}
+df_best <- df_input %>% count(name, name="freq", sort= TRUE)
+df_best
+```
+
+Berikut Summary datanya:
+```{r}
+summary(df_best)
+```
+Median dari summary ini akan digunakan untuk menentukan nilai support dalam analisa ini (dijelaskan dibawah). Mari kita cek sebaran frekuensinya dahulu:
+
+```{r}
+plot_ly(x=~df_best$freq, type="histogram") %>% 
+  layout(title = "Product Sales Frequency",
+         xaxis = list(title="frequency", zeroline=FALSE),
+         yaxis = list(title="count", zeroline=FALSE))
+```
+
+
+Frequency penjualan produk paling banyak dalam rentang 0-500. 
+
+
+```{r}
+df_best %>% head(10) %>% 
+  mutate(name = as.factor(name),
+         name = reorder(name,freq)) %>% 
+plot_ly(x=~freq, y=~name, 
+        text= ~freq, textposition = 'auto',
+        type="bar", orientation="h") %>% 
+  layout(title = "Top 10 Product based on Sales Frequency",
+         yaxis = list(title=""),
+         xaxis = list(title="frequency"))
+```
+
+Chart diatas menunjukan 10 produk yang paling banyak dibeli.
+
+
+```{r}
+df_best %>% tail(10) %>% 
+  mutate(name = as.factor(name),
+         name = reorder(name,freq)) %>% 
+plot_ly(x=~freq, y=~name, 
+        text= ~freq, textposition = 'auto',
+        type="bar", orientation="h") %>% 
+  layout(title = "Worst 10 Product based on Sales Frequency",
+         yaxis = list(title=""),
+         xaxis = list(title="frequency"))
+```
+
+Chart diatas menunjukan 10 produk yang paling sedikit dibeli. Jika dilihat rentang frekuensinya cukup berbeda jauh dengan produk yang paling banyak dibeli. Dengan mengetahui ini, kita sebenarnya juga bisa mengambil keputusan misalkan, produk yang paling sering dibeli diletakan pada bagian display utama supaya customer dapat dengan mudah mencari produk tersebut. Namun disisi lain, produk yang ada berbagai macam dan pelanggan juga melakukan pembelian yang berbeda-beda. Sehingga, kita harus melakukan analisa lebih detail untuk mendapatkan output yang lebih menarik. 
+
+<br>
+
+---
+
+# Market Basket Analysis
+
+Market Basket Analysis atau sering disebut Association Rules merupakan kegiatan mencari aturan atau *rules* asosiasi yang menunjukan hubungan antar item dalam suatu transaksi. Sebagai contoh asosiasi yaitu ketika pelanggan membeli sikat gigi, maka ia akan membeli pasta gigi juga, atau ketika seorang membeli handphone, maka ia akan membeli casing handphone. **Pola-pola asosiasi sangat bermanfaat dalam industri retail seperti penetapan diskon produk, promo, penjualan dalam bentuk paket, rekomendasi produk, serta penentuan lokasi penempatan item produk.** <br>
+
+Adapun bidang industri lain yang juga dapat menggunakan Market Basket Analysis ini untuk menemukan pola di dalam data, misalnya dalam bidang kesehatan, association rules digunakan untuk mendapatkan hubungan dan interaksi antara faktor resiko seseorang dengan kecenderungan penyakit yang muncul. Di bidang genetika, association rules dapat digunakan untuk menemukan antara asosiasi faktor lingkungan dengan ekspresi gen yang muncul. Di bidang manufaktur, association rules dapat digunakan untuk mencari pola hubungan antara parameter-parameter proses produksi dengan potensi permasalahan kualitas produk. Market Basket Analysis juga dapat digunakan untuk mencari pola-pola desain produk yang diinginkan oleh pelanggan sehingga dapat menjadi dasar perancangan desain produk (Algoritma, 2020).
+
+
+Salah satu algoritma atau metode yang populer untuk mencari Association Rule yaitu **Apriori Alogirthm**. Aturan asosiasi yang dihasilkan akan memiliki bentuk sebagai berikut:
+
+$$A => B$$
+
+Berasarkan aturan di atas, A adalah *antecedent* atau pendahulu sedangkan B adalah *consequent* atau akibat. Dalam R, *antecedent* dikenal **LHS** dan *consequent* dikenal **RHS**. Aturan diatas dapat dimisalkan ketika seorang pelanggan membeli item A, maka ia cenderung akan membeli item B. Antecedent dapat berisi satu atau lebih item yang digunakan sebagai penanda bahwa ketika kita/penjual mengetahui pelanggan membeli item antecedent maka pelanggan juga cenderung akan membeli item consequent. Misalkan contoh dengan beberapa antecedent, Seorang pelanggan membeli roti dan mentega, maka pelangan tersebut cenderung membeli meses ceres.
+
+
+## Association Rules Metrics
+
+Terdapat matriks atau tolak ukur yang digunakan dalam association Rules, yang meliputi *Support*, *Confidence*, dan *Lift*.
+
+
+Sebagai ilustrasi, kita akan menggunakan data buatan yang berisi 5 transaksi sebagai berikut:
+
+```{r}
+df_dummy <- data.frame(transaction_id = 1:5,
+                       items = c("soft drink, mineral water", 
+                                 "soft drink", 
+                                 "coffee, mineral water, lemon tea",
+                                 "bread, coffee, mineral water",
+                                 "coffee, mineral water"))
+
+df_dummy
+```
+
+
+### Support
+
+Support menunjukkan proporsi dari jumlah transaksi yang memiliki satu atau lebih item yang muncul secara bersamaan dibandingkan dengan jumlah transaksi secara keseluruhan. Rumus untuk menghitung Support dari suatu item adalah sebagai berikut:
+
+$$Support(B) = \frac{Jumlah\ transaksi\ yang\ berisi\ item\ B }{Jumlah\ seluruh\ transaksi} = \frac{Freq(B)}{N}$$
+
+Berdasarkan data transaksi sebelumnya, maka Support untuk item `soft drink` adalah sebagai berikut.
+
+$$Support(soft\ drink) =  \frac{2}{5} = 0.4$$
+
+
+Artinya 40% dari total transaksi mengandung item soft drink.  
+
+Jika itemnya lebih dari satu, maka rumusnya menjadi seperti berikut:
+
+$$Support(A,B) = \frac{Jumlah\ transaksi\ yang\ berisi\ item\ A\ \&\ B }{Jumlah\ seluruh\ transaksi} = \frac{Freq(A \cup B)}{N}$$
+
+Berdasarkan data transaksi `df_dummy` sebelumnya, maka Support untuk item `coffee` dan `mineral water`  adalah sebagai berikut.
+
+$$Support(coffee, mineral\ water) =  \frac{3}{5} = 0.6$$
+
+Artinya 60% dari total transaksi mengandung item coffee dan mineral water.  
+
+### Confidence
+
+Jika Support hanya menunjukkan seberapa banyak proporsi sebuah item di seluruh transaksi, maka confidence menunjukkan **seberapa besar kemungkinan seseorang akan membeli item B jika terdapat item A**, atau setara dengan berapa banyak jumlah transaksi yang memiliki item A dan item B diantara transaksi-transaksi yang memiliki item A. Rumus untuk menghitung Confidence adalah sebagai berikut:
+
+$$Confidence(A => B) = \frac{Freq(A\ \cap\ B)}{Freq(A)}$$
+
+Berdasarkan data transaksi sebelumnya, maka Confidence untuk item `coffee` dan `mineral water` adalah sebagai berikut:
+
+$$Confidence(mineral\ water => coffee) =  \frac{3}{4} = 0.75$$
+
+Confidence(mineral water => coffee) menunjukkan rules/aturan jika seseorang membeli mineral water, berapa kemungkinannya dia juga membeli coffee. Maka, kita perlu mencari ada berapa transaksi yang terdapat item mineral water dan coffee dan dibagi dengan seluruh transaksi yang di dalamnya terdapat mineral water. Dari total 5 transaksi yang ada, 4 di antaranya terdapat item mineral water dan dari 4 transaksi tersebut terdapat 3 transaksi yang memiliki coffee maupun mineral water, sehingga nilai Confidence(mineral water => coffee) adalah 3 dari 4 transaksi atau sama degan 75%. Maka, ketika seseorang membeli mineral water, kemungkinan seseorang membeli juga coffee adalah sekitar 75%.
+
+Kelemahan dari Confidence adalah Confidence hanya mempertimbangkan seberapa banyak/populer item A saja (perhatikan bagian penyebut) dan tidak memperhatikan seberapa populer item B dalam seluruh transaksi. <br>
+
+
+### Lift
+
+Lift menunjukkan seberapa baik sebuah antecedent "mengangkat" atau meningkatkan peluang seseorang membeli item consequent. Jika Confidence hanya mengukur seberapa besar peluang untuk membeli item B jika diketahui item A dibeli, maka Lift mengukur seberapa besar pembelian item A meningkatkan peluang pembelian item B. Rumus untuk menghitung Lift adalah sebagai berikut:
+
+$$Lift(A,B) = \frac{Support(A,B)}{Support(A)\ Support(B)}$$
+
+Berdasarkan data transaksi sebelumnya, maka Lift untuk item `coffee` dan `mineral water` adalah sebagai berikut.
+
+Pertama, kita hitung terlebih dahulu nilai dari masing-masing Support yang dibutuhkan.
+
+$$Support(mineral\ water, coffee) =  \frac{3}{5} = 0.6$$
+
+$$Support(mineral\ water) =  \frac{4}{5} = 0.8$$
+
+$$Support(coffee) =  \frac{3}{5} = 0.6$$
+
+Setelah mendapatkan semua nilai Support, kemudian masukkan nilai Support yang diperoleh ke dalam rumus untuk mendapatkan nilai Lift dari `mineral water => coffee`.
+
+$$Lift(mineral\ water => coffee) = \frac{0.6}{0.6\ 0.8} = 1.25$$
+
+Didapatkan nilai Lift(mineral water => coffee) = 1.25. Bagaimana cara menginterpretasikannya? Lift membandingkan peluang ketika keberadaan item satu menjadi sinyal kuat bahwa item lain juga akan dibeli dengan peluang bahwa keberadaan item satu dengan lainnya saling independen dan tidak berkaitan, sehingga:
+
+* Jika nilai Lift = 1, maka kedua item bersifat independen satu sama lain (tidak ada rules yang terbentuk).
+* Ketika nilai Lift > 1, maka dapat kita katakan bahwa keberadaan mineral water meningkatkan peluang bahwa seseorang juga membeli coffee. 
+* Jika nilai Lift < 1, maka pembelian mineral water malah menurunkan peluang bahwa seseorang juga akan membeli coffee.
+
+
+## Algoritme Apriori
+
+Algoritma yang umum digunakan untuk membuat association rules adalah *Apriori Algorithm*. Berikut merupakan cara kerja Apriori secara umum:     
+1. Menentukan nilai minimum Support dan minimum Confidence     
+2. Membuat itemsets dari daftar item yang ada
+3. Membandingkan support dari itemsets tersebut dengan minimum support, apabila nilai support dari suatu item dibawah minimum support maka itemsets tersebut dibuang atau tidak dibuat rules-nya.     
+4. Membandingkan antara minimum Confidence dengan Confidence dari rules yang telah memenuhi minimum support. Hanya ambil rules yang memiliki Confidence lebih tinggi dari minimum Confidence.      
+
+
+
+
+## Sparse matrix
+
+Setelah mengetahui *metrics* yang digunakan dalam market basket analysis, serta cara kerja dari algoritme apriori,maka kita perlu membuat rules dari data yang kita miliki. Perlu diingat bahwa struktur data input dalam algoritme Apriori harus berbentuk *matrix*. Setiap baris dalam matrix yang terbentuk merepresentasikan id transaksi dan kolom merepresentasikan barang yang dibeli.
+ **Sparse Matrix** merupakan matrix dengan elemen utamanya adalah nilai 0. Jadi, jika dalam satu transaksi tidak membeli item tertentu maka nilainya 0 (nol) dan jika transaksi tersebut membeli produk tertentu maka nilainya 1 (satu).
+
+
+---
+
+
+# Association Rules Modelling
+
+## Convert Data to Sparse Matrix 
+
+Kekurangan dari sparse matrix adalah dimensi yang sangat besar. akibat dari dimensi yang besar ini adalah komputasi yang besar sehingga memperlambat waktu komputasi dalam pembuatan rules. Oleh karena itu, untuk mengatasi permasalahan tersebut kita akan menggunakan data bertipe `transactions` dimana data tersebut harus dikelompokkan berdasarkan `trans_id` dengan menggunakan fungsi `split()`
+
+```{r}
+df_clean <- df_input
+market_list <- split(df_clean$name, df_clean$trans_id)
+head(market_list,3)
+```
+
+Setelah mengubah data menjadi list, selanjutnya kita akan mengubah data list tersebut menjadi data `transaction` dengan menggunakan fungsi `as()`. Berikut ini proses dan hasilnya:
+```{r}
+market_transaction <- as(market_list, "transactions")
+market_transaction %>% 
+  head(2) %>% 
+  inspect()
+```
+
+Informasi diatas merupkan contoh 2 data transaksi. Infomasi tersebut menunjukan himpunan/kumpulan produk yang dibeli dalam masing-masing transaksi.
+
+
+## Create Rules
+
+Rules dari algoritma apriori bisa dihasilkan dengan fungsi `apriori()` dari package `arules`. Dalam kasus ini, saya memberi batasan nilai **support** berdasarkan perhitungan berikut:
+
+$$support = Median\ Frekuensi\ Pembelian\ Produk\ / Jumlah\ Transaksi\ Keseluruhan$$
+$$support = 397.5/4601$$
+$$support = 0.08 \ \ (8\%)$$
+
+Nilai support ini mengartikan setidaknya atau minimal produk dibeli sebanyak 8% transaksi. Kemudian untuk minimum confidence saya adjust secara subjektif bernilai **0.8**. Berikut proses dan hasilnya:
+
+
+```{r message=F}
+market_rules <- apriori(data = market_transaction, parameter = list(supp = 0.08, conf = 0.85))
+```
+
+Hasil rules yang dibuat sebnayak 5812 rules.
+
+
+## Result
+
+### Rules
+
+Fungsi apriori di atas menghasilkan 5812 rules, kita bisa menampilkan beberapa rules saja berdasarkan kriteria yang kita pilih. Bila ingin melihat 5 rules teratas berdasarkan nilai confidence tertinggi dapat menggunakan kode di bawah ini:
+
+```{r}
+rules_conf <- head(market_rules, 5, by = "confidence")
+inspect(rules_conf)
+```
+
+Nilai *Confidence* yang tinggi menunjukkan seberapa besar peluang membeli item lainnya jika kita telah membeli saru atau beberapa item. Rules dengan *Confidence* tertinggi adalah **{beef,biscuits,frozen foods ,fruit,milk cream,vegetables} => {bread and cake }**, artinya ketika seorang pelanggan membeli 6 item tersebut, kemungkinan besar pelanggan juga akan membeli **bread and cake** karena dari seluruh transaksi yang berisi item pertama yang dibeli, 0.93 atau 93% pembelian juga terdapat item **bread and cake**. 
+
+Kelemahan apabila melihat rules berdasarkan nilai *Confidence* adalah, *Confidence* hanya melihat dari transaksi antecedent dan tidak memperhatikan transaksi-transaksi lain dari consequent. Maka, kita perlu melihat seberapa baik antecedent meningkatkan peluang untuk pelanggan membeli item lainnya jika kita mengetahui dia telah memberi sekumpulan barang-barang tertentu dibandingkan ketika kita tidak tahu bahwa pelanggan membeli barang-barang tersebut. Oleh sebab itu, mari kita periksa 5 rules dengan *Lift* tertinggi.
+
+```{r}
+rules_lift <- head(market_rules, n = 5, by = "lift")
+inspect(rules_lift) 
+```
+
+Berdasarkan hasil di atas, rules **{baking needs, bread and cake, frozen foods, fruit, juice sat cord ms, party snack foods,vegetables}	=>	{biscuits}** memiliki *Lift* terbesar dengan nilai 1.54. Karena nilai *Lift* lebih besar dari 1, jika pelanggan membeli **{baking needs, bread and cake, frozen foods, fruit, juice sat cord ms, party snack foods,vegetables}** maka akan membeli **biscuits**.
+
+
+Bisa dilihat hasil A => B pada data rules dengan confidence tertinggi dan lift tertingi berbeda. Meskipun, kedua rules ini sama-sama meningkatkan peluang pembelian item consequentnya, namun efek yang dihasilkan dengan nilai lift tertinggi lebih berpengaruh. **Dan mengapa hal ini penting?** Hal Contonya, hal ini bisa mendukung keputusan untuk memiliki produk mana yang seharusnya ditempatkan pada posisi display utama.
+
+
+### Result Visualization
+
+Untuk memvisualisasikan rules yang sudah terbentuk kita dapat menggunakan fungsi `plotly_arules` dari packages `arulesViz`
+
+```{r message=F, warning=F}
+plotly_arules(market_rules)
+```
+
+
+Berdasarkan 670 rules yang dihasilkan, hanya terdapat beberapa rules yang memiliki *Confidence* tinggi atau *Lift* yang tinggi. Defini tinggi disini bisa berbeda-beda tergantung kebutuhan bisnis. Sedangkan, dari semua rules yang dihasilkan, tidak terdapat rules yang memilki *Lift* kurang dari 1, sehingga dapat disimpulkan bahwa semua rules yang dihasilkan dapat meningkatkan peluang untuk pembelian item tertentu.
+
+Dari rules yang dihasilkan dapat dilihat juga hubungan antar rules dengan menggunakan `graph` atau network, dengan tiap lingkaran atau titik adalah rules dan panah sebagai hubungan antara rules dengan item barangnya.
+
+
+
+
+```{r  message=F, warning=F, fig.width=9, fig.asp=1}
+set.seed(2020, sample.kind = "Rounding")
+plot(market_rules, # rules yang telah dibuat
+     method = "graph",  # 
+     measure = "lift",  
+     engine = "htmlwidget" # membuat grafik interaktif
+     )
+```
+
+
+Dari graph diatas, dataset ini hanya membentuk 1 cluster. Semakin merah warna node/lingkaran rules maka semakin tinggi nilai lift. Kemudian pada graph terdapat tanda arah/panah yang menunjukan item antecedent tertentu menghasilkan item consequent melalui rules tertentu. Contohnya output yang bisa kita dapat dari **Rule 100** yaitu kita bisa membuat keputusan, misalkan:<br>
+1. Melakukan penjualan yang bersifat *bundle package* dari produk baking needs ,bread and cake ,frozen foods ,fruit, juice sat cord ms, party snack foods, vegetables dan biscuits.<br>
+2. Melakukan pemetaan posisi produk-produk tersebut berdekatan dalam suatu rak belanja.
+
+
+<br><br>
+Berikut ini adalah data rules yang dihasilkan dengan consquent/RHS nya `biscuits`.
+
+```{r}
+market_biscuit_rules <- apriori(data = market_transaction,
+                        parameter = list(supp = 0.08, conf = 0.85), 
+                        appearance = list(rhs = "biscuits"), 
+                        control = list(verbose = F))
+market_biscuit_rules %>% 
+  DATAFRAME() %>% 
+  arrange(desc(lift))
+
+```
+
+
+Berikut ini tambahan jika hendak mengetahui produk/item mana yang paling sering muncul sebagai antecedent.
+
+```{r}
+library(tidyr)
+library(stringr)
+library(tibble)
+
+market_rules %>% 
+  DATAFRAME() %>% 
+  tibble::rownames_to_column("id") %>% 
+  separate_rows_(cols = "LHS", sep =  ",") %>% 
+  mutate(LHS = str_remove_all(LHS, "[:punct:]")) %>% 
+  count(LHS) %>% 
+  arrange(desc(n))
+
+```
+
+
+---
+
+# Summary
+
+Hasil analisa diatas tentunya dapat dikembangkan lagi sesuai dengan kebutuhan dan berbagai pertimbangan. Misalkan melakukan seleksi produk atau data yang hanya ada pada rentang waktu, lokasi tertentu atau segmen tertentu. Data yang digunakan diatas merupakan data supermarket yang didapatkan dari bahan pelatihan "Cross Selling and Market Basket Analysis" yang dilakukan oleh PT. Algoritma Data Indonesia atau akrab dikenal Algoritma Data Science School. Dari penjelasan analisa diatas, dengan menerapkan market basket analysis pada perusahaan retail maka akan memudahkan perusahaan untuk menentukan strategi-strategi, seperti: <br>
+1. Menyediakan bundling package dengan promo tertentu untuk meningkatkan pembelian dan melakukan cross selling. <br>
+2. Memaksimalkan tata letak produk supaya pelanggan lebih mudah mendapatkan produk tersebut.<br>
+3. Memberikan rekomendasi produk untuk meningkatkan penjualan.
+
+
+
+
+
+
+
